@@ -146,38 +146,39 @@ app.get("/", async (c) => {
 
 // Endpoint to trigger major discovery scraping
 app.post("/api/programs", validateApiKey, async (c) => {
-    try {
-      const db = getDB(c.env);
+  try {
+    const db = getDB(c.env);
 
-      const programsUrl = new URL("/programs", c.env.SCRAPING_BASE_URL).toString();
+    const programsUrl = new URL(
+      "/programs",
+      c.env.SCRAPING_BASE_URL,
+    ).toString();
 
-      const [createdJob] = await db
-        .insert(jobs)
-        .values({ url: programsUrl, jobType: "discover-programs" })
-        .returning();
-      
-      await c.env.SCRAPING_QUEUE.send({ jobId: createdJob.id });
+    const [createdJob] = await db
+      .insert(jobs)
+      .values({ url: programsUrl, jobType: "discover-programs" })
+      .returning();
 
-      await db.$client.end()
+    await c.env.SCRAPING_QUEUE.send({ jobId: createdJob.id });
 
-      console.log(`Created major discovery job [id: ${createdJob.id}]`);
+    await db.$client.end();
 
-      return c.json({
-        success: true,
-        jobId: createdJob.id,
-        jobType: createdJob.jobType,
-      });
+    console.log(`Created major discovery job [id: ${createdJob.id}]`);
 
-
-    } catch (error) {
-      console.error(error);
-      return c.json({ error: "Database configuration is missing" }, 500);
-    }
+    return c.json({
+      success: true,
+      jobId: createdJob.id,
+      jobType: createdJob.jobType,
+    });
+  } catch (error) {
+    console.error(error);
+    return c.json({ error: "Database configuration is missing" }, 500);
+  }
 });
 
 // Endpoint to trigger course discovery scraping
 app.post("/api/courses", validateApiKey, async (c) => {
-  try{
+  try {
     const db = getDB(c.env);
 
     const coursesUrl = new URL("/courses", c.env.SCRAPING_BASE_URL).toString();
@@ -186,11 +187,11 @@ app.post("/api/courses", validateApiKey, async (c) => {
       .insert(jobs)
       .values({ url: coursesUrl, jobType: "discover-courses" })
       .returning();
-    
+
     await c.env.SCRAPING_QUEUE.send({ jobId: createdJob.id });
 
     await db.$client.end();
-    
+
     console.log(`Created course discovery job [id: ${createdJob.id}]`);
 
     return c.json({
@@ -198,7 +199,7 @@ app.post("/api/courses", validateApiKey, async (c) => {
       jobId: createdJob.id,
       jobType: createdJob.jobType,
     });
-  }catch(error){
+  } catch (error) {
     console.error(error);
     return c.json({ error: "Database configuration is missing" }, 500);
   }
@@ -210,39 +211,66 @@ export default {
   async queue(
     batch: MessageBatch<JobMessage>,
     env: CloudflareBindings,
-    ctx: ExecutionContext,
+    _ctx: ExecutionContext,
   ) {
     const db = getDB(env);
 
-    for (const message of batch.messages) {
-      const { jobId } = message.body;
+    try {
+      for (const message of batch.messages) {
+        const { jobId } = message.body;
 
-      const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1); 
+        try {
+          const [job] = await db
+            .select()
+            .from(jobs)
+            .where(eq(jobs.id, jobId))
+            .limit(1);
 
-      if (!job) {
-        message.ack();
-        continue;
-      }
+          if (!job) {
+            message.ack();
+            continue;
+          }
 
-      ctx.waitUntil(
-        (async () => {
-          try {
-            await db
-              .update(jobs)
-              .set({ status: "processing", startedAt: new Date() })
-              .where(eq(jobs.id, jobId));
+          await db
+            .update(jobs)
+            .set({ status: "processing", startedAt: new Date() })
+            .where(eq(jobs.id, jobId));
 
-            let result: unknown = null;
+          let result: unknown = null;
 
-            switch (job.jobType) {
-              case "discover-programs": {
-                const programUrls = await discoverPrograms(job.url);
+          switch (job.jobType) {
+            case "discover-programs": {
+              const programUrls = await discoverPrograms(job.url);
+              const newJobs = await db
+                .insert(jobs)
+                .values(
+                  programUrls.map((url) => ({
+                    url,
+                    jobType: "program" as const,
+                  })),
+                )
+                .returning();
+
+              await env.SCRAPING_QUEUE.sendBatch(
+                newJobs.map((j) => ({ body: { jobId: j.id } })),
+              );
+              break;
+            }
+            case "discover-courses": {
+              const courseUrls = await discoverCourses(job.url);
+              // NOTE: Cloudflare Queues has a limit of 100 messages per sendBatch()
+              console.log(`Discovered ${courseUrls.length} course URLs`);
+
+              const BATCH_SIZE = 10;
+              for (let i = 0; i < courseUrls.length; i += BATCH_SIZE) {
+                const batch = courseUrls.slice(i, i + BATCH_SIZE);
+
                 const newJobs = await db
                   .insert(jobs)
                   .values(
-                    programUrls.map((url) => ({
+                    batch.map((url) => ({
                       url,
-                      jobType: "program" as const,
+                      jobType: "course" as const,
                     })),
                   )
                   .returning();
@@ -250,121 +278,97 @@ export default {
                 await env.SCRAPING_QUEUE.sendBatch(
                   newJobs.map((j) => ({ body: { jobId: j.id } })),
                 );
-                break;
-              }
-              case "discover-courses": {
-                const courseUrls = await discoverCourses(job.url);
-                // NOTE: Cloudflare Queues has a limit of 100 messages per sendBatch()
-                console.log(`Discovered ${courseUrls.length} course URLs`);
-
-                const BATCH_SIZE = 10;
-                for (let i = 0; i < courseUrls.length; i += BATCH_SIZE) {
-                  const batch = courseUrls.slice(i, i + BATCH_SIZE);
-
-                  const newJobs = await db
-                    .insert(jobs)
-                    .values(
-                      batch.map((url) => ({
-                        url,
-                        jobType: "course" as const,
-                      })),
-                    )
-                    .returning();
-
-                  await env.SCRAPING_QUEUE.sendBatch(
-                    newJobs.map((j) => ({ body: { jobId: j.id } })),
-                  );
-
-                  console.log(
-                    `Queued batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(courseUrls.length / BATCH_SIZE)} (${newJobs.length} jobs)`,
-                  );
-                }
-                break;
-              }
-              case "program": {
-                const res = await scrapeProgram(job.url, db, env);
-
-                result = ZUpsertProgramWithRequirements.parse({
-                  ...res.program,
-                  requirements: res.requirements,
-                });
-                break;
-              }
-              case "course": {
-                // A single URL may contain multiple courses
-                if (COURSE_SCRAPE_DELAY_MS > 0) {
-                  await sleep(COURSE_SCRAPE_DELAY_MS);
-                }
-                const courses = await scrapeCourse(job.url);
 
                 console.log(
-                  `Scraped ${courses.length} courses from ${job.url}`,
+                  `Queued batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(courseUrls.length / BATCH_SIZE)} (${newJobs.length} jobs)`,
                 );
-
-                result = courses.map((courseData) =>
-                  ZUpsertCourseWithPrerequisites.parse({
-                    ...courseData.course,
-                    prerequisites: courseData.prerequisites,
-                  }),
-                );
-                break;
               }
-              case "discover-course-offerings": {
-                const metadata = job.metadata as {
-                  term: "spring" | "summer" | "fall" | "j-term";
-                  year: number;
-                } | null;
-
-                if (!metadata?.term || !metadata?.year) {
-                  throw new JobError(
-                    "Missing term or year in job metadata",
-                    "validation",
-                  );
-                }
-
-                const courseOfferingUrls = await discoverCourseOfferings(
-                  job.url,
-                  metadata.term,
-                  metadata.year,
-                );
-                const newJobs = await db
-                  .insert(jobs)
-                  .values(
-                    courseOfferingUrls.map((url) => ({
-                      url,
-                      jobType: "course-offering" as const,
-                      metadata: { term: metadata.term, year: metadata.year },
-                    })),
-                  )
-                  .returning();
-
-                await env.SCRAPING_QUEUE.sendBatch(
-                  newJobs.map((j) => ({ body: { jobId: j.id } })),
-                );
-                break;
-              }
-              case "course-offering": {
-                const courseOfferings = await scrapeCourseOfferings(job.url);
-
-                result = ZUpsertCourseOfferings.parse(courseOfferings);
-                break;
-              }
+              break;
             }
+            case "program": {
+              const res = await scrapeProgram(job.url, db, env);
 
-            await db
-              .update(jobs)
-              .set({ status: "completed", completedAt: new Date(), result })
-              .where(eq(jobs.id, jobId));
+              result = ZUpsertProgramWithRequirements.parse({
+                ...res.program,
+                requirements: res.requirements,
+              });
+              break;
+            }
+            case "course": {
+              // A single URL may contain multiple courses
+              if (COURSE_SCRAPE_DELAY_MS > 0) {
+                await sleep(COURSE_SCRAPE_DELAY_MS);
+              }
+              const courses = await scrapeCourse(job.url);
 
-            message.ack();
-          } catch (error) {
-            const jobError =
-              error instanceof JobError
-                ? error
-                : new JobError(
-                    error instanceof Error ? error.message : "Unknown error",
-                  );
+              console.log(`Scraped ${courses.length} courses from ${job.url}`);
 
+              result = courses.map((courseData) =>
+                ZUpsertCourseWithPrerequisites.parse({
+                  ...courseData.course,
+                  prerequisites: courseData.prerequisites,
+                }),
+              );
+              break;
+            }
+            case "discover-course-offerings": {
+              const metadata = job.metadata as {
+                term: "spring" | "summer" | "fall" | "j-term";
+                year: number;
+              } | null;
+
+              if (!metadata?.term || !metadata?.year) {
+                throw new JobError(
+                  "Missing term or year in job metadata",
+                  "validation",
+                );
+              }
+
+              const courseOfferingUrls = await discoverCourseOfferings(
+                job.url,
+                metadata.term,
+                metadata.year,
+              );
+              const newJobs = await db
+                .insert(jobs)
+                .values(
+                  courseOfferingUrls.map((url) => ({
+                    url,
+                    jobType: "course-offering" as const,
+                    metadata: { term: metadata.term, year: metadata.year },
+                  })),
+                )
+                .returning();
+
+              await env.SCRAPING_QUEUE.sendBatch(
+                newJobs.map((j) => ({ body: { jobId: j.id } })),
+              );
+              break;
+            }
+            case "course-offering": {
+              const courseOfferings = await scrapeCourseOfferings(job.url);
+
+              result = ZUpsertCourseOfferings.parse(courseOfferings);
+              break;
+            }
+          }
+
+          await db
+            .update(jobs)
+            .set({ status: "completed", completedAt: new Date(), result })
+            .where(eq(jobs.id, jobId));
+
+          message.ack();
+        } catch (error) {
+          message.retry();
+          const jobError =
+            error instanceof JobError
+              ? error
+              : new JobError(
+                  error instanceof Error ? error.message : "Unknown error",
+                );
+
+          try {
             await db.insert(errorLogs).values({
               jobId: jobId,
               errorType: jobError.type,
@@ -377,13 +381,13 @@ export default {
               .update(jobs)
               .set({ status: "failed" })
               .where(eq(jobs.id, jobId));
-
-            message.retry();
-          } finally{
-            await db.$client.end();
+          } catch {
+            console.error(`Could not persist failure details for job ${jobId}`);
           }
-        })(),
-      );
+        }
+      }
+    } finally {
+      await db.$client.end();
     }
   },
 };

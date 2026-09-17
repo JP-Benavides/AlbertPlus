@@ -2,15 +2,25 @@ import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 const updates: Record<string, unknown>[] = [];
 let failResultWrite = false;
+let closed = false;
+const end = mock(async () => {
+  closed = true;
+});
 const db = {
+  $client: { end },
   select: () => ({
     from: () => ({
       where: () => ({
-        get: async () => ({
-          id: "job-1",
-          jobType: "course",
-          url: "https://bulletins.nyu.edu/courses/csci_ua/",
-        }),
+        limit: async () => {
+          if (closed) throw new Error("Client is closed");
+          return [
+            {
+              id: "job-1",
+              jobType: "course",
+              url: "https://bulletins.nyu.edu/courses/csci_ua/",
+            },
+          ];
+        },
       }),
     }),
   }),
@@ -34,11 +44,14 @@ afterEach(() => {
   fetchSpy.mockReset();
   updates.length = 0;
   failResultWrite = false;
+  closed = false;
+  end.mockClear();
 });
 
-async function runCourseJob() {
-  fetchSpy.mockResolvedValue(
-    new Response(`
+async function runCourseJob(messageCount = 1) {
+  fetchSpy.mockImplementation(
+    async () =>
+      new Response(`
     <h1 class="page-title">Computer Science (CSCI-UA)</h1>
     <div class="courseblock">
       <span class="detail-code"><strong>CSCI-UA 101</strong></span>
@@ -52,7 +65,11 @@ async function runCourseJob() {
   const pending: Promise<unknown>[] = [];
   await worker.queue(
     {
-      messages: [{ body: { jobId: "job-1" }, ack, retry }],
+      messages: Array.from({ length: messageCount }, (_, i) => ({
+        body: { jobId: `job-${i + 1}` },
+        ack,
+        retry,
+      })),
     } as unknown as MessageBatch<{ jobId: string }>,
     env,
     {
@@ -66,6 +83,15 @@ async function runCourseJob() {
 }
 
 describe("Standalone scraper worker", () => {
+  test("processes the whole batch before closing its shared client once", async () => {
+    const { ack, retry } = await runCourseJob(2);
+    expect(ack).toHaveBeenCalledTimes(2);
+    expect(retry).not.toHaveBeenCalled();
+    expect(
+      updates.filter((update) => update.status === "completed"),
+    ).toHaveLength(2);
+    expect(end).toHaveBeenCalledTimes(1);
+  });
   test("protects triggers with the scraper API key", async () => {
     const missing = await worker.fetch(
       new Request("https://scraper.test/api/courses", { method: "POST" }),
