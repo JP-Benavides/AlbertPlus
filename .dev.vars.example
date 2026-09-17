@@ -1,0 +1,2 @@
+SCRAPER_API_KEY=replace-with-your-scraper-key
+DATABASE_URL=replace-with-your-supabase-postgres-connection-string

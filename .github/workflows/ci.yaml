@@ -43,3 +43,9 @@ jobs:
 
       - name: 🔍 Type Check
         run: bun check:types
+
+      - name: Test parser
+        run: bun test
+
+      - name: Bundle Worker
+        run: bun run build

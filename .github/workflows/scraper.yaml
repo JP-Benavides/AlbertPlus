@@ -1,18 +1,11 @@
 name: scraper
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/scraper/**"
+  workflow_dispatch:
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./apps/scraper
     environment: deploy-scraper
     env:
       DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}

@@ -1,0 +1,30 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "albert-plus-scraper",
+  "main": "src/index.ts",
+  "minify": true,
+  "compatibility_date": "2025-09-26",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "queues": {
+    "producers": [
+      {
+        "queue": "albert-plus-scraping-queue",
+        "binding": "SCRAPING_QUEUE"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "albert-plus-scraping-queue",
+        "max_batch_size": 10,
+        "max_batch_timeout": 60
+      }
+    ]
+  },
+  "vars": {
+    "SCRAPING_BASE_URL": "https://bulletins.nyu.edu/",
+    "ALBERT_SCRAPING_BASE_URL": "https://bulletins.nyu.edu/class-search/"
+  }
+}

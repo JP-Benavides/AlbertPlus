@@ -7,7 +7,12 @@
   },
   "files": {
     "ignoreUnknown": true,
-    "includes": ["**"]
+    "includes": [
+      "**",
+      "!worker-configuration.d.ts",
+      "!**/__mocks__",
+      "!!**/migrations"
+    ]
   },
   "formatter": {
     "enabled": true,

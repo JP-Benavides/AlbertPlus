@@ -1,70 +1,114 @@
-<div align="center">
-  <a href="https://albertplus.com">
-    <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/TechAtNYU/AlbertPlus/main/apps/web/public/logo_dark.svg">
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/TechAtNYU/AlbertPlus/main/apps/web/public/logo.svg">
-      <img src="https://raw.githubusercontent.com/TechAtNYU/AlbertPlus/main/apps/web/public/logo.svg" alt="Logo" width="120" height="50">
-    </picture>
-  </a>
+# NYU Scraper
 
-  <p align="center">
-    A modern, open-source platform to enhance the NYU course planning and registration experience.
-    <br />
-    <br />
-    <a href="https://albertplus.com">Website</a>
-    ·
-    <a href="https://docs.albertplus.com">Documentation</a>
-    ·
-    <a href="https://github.com/TechAtNYU/AlbertPlus/issues">Bug Report/Feature Request</a>
-  </p>
-</div>
+This repository contains the AlbertPlus NYU scraper and parser only. The web app,
+browser extension, documentation site, and application backend have been removed.
 
-<div align="center">
+## What is implemented
 
-[![CI](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/ci.yaml/badge.svg)](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/ci.yaml)
-[![Web Deploy](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/web-prod.yaml/badge.svg)](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/web-prod.yaml)
-[![Docs Deploy](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/docs.yaml/badge.svg)](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/docs.yaml)
-[![Scraper Deploy](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/scraper.yaml/badge.svg)](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/scraper.yaml)
-[![Browser Extension Deploy](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/browser.yml/badge.svg)](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/browser.yml)
-[![Convex Deploy](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/convex_prod.yaml/badge.svg)](https://github.com/TechAtNYU/AlbertPlus/actions/workflows/convex_prod.yaml)
+- Course catalog discovery and parsing: codes, titles, credits, descriptions,
+  schools, levels, and basic prerequisites.
+- Cloudflare Worker HTTP endpoints, queue processing, D1 job tracking and error logs.
+- Parsed output retained in the D1 job record through Drizzle.
 
-</div>
+Program and semester course-offering parsers are **not implemented**. Their modules
+remain as placeholders; program tests are explicitly skipped. There is no automatic
+schedule configured; trigger catalog scraping through the HTTP endpoint.
 
----
+## Layout
 
-## Table of Contents
+```text
+  src/modules/courses/          Implemented catalog parser and offline tests
+  src/modules/programs/         Program placeholder
+  src/modules/courseOfferings/  Course-section placeholder
+  src/lib/schemas.ts            Local data contracts (no backend package dependency)
+  src/lib/queue.ts              Job message and error types
+  src/drizzle/                  D1 job/result/error schema and migrations
+  src/index.ts                  Worker routes, queue consumer, cron handler
+  wrangler.jsonc               Cloudflare deployment configuration
+```
 
-- [About The Project](#about-the-project)
-- [Deployed Sites](#deployed-sites)
-- [Getting Started](#getting-started)
-- [Contributing](#contributing)
-- [License](#license)
+## Setup and checks
 
-## About The Project
+Install Bun 1.3.4 or newer, then run from the repository root:
 
-AlbertPlus is a comprehensive, open-source platform designed to enhance the course registration experience for New York University (NYU) students. It provides a modern, intuitive interface and a suite of tools to help students plan their academic journey, build schedules, and navigate the complexities of course selection. The project is a monorepo that consists of a web application, a browser extension, a web scraper, and a documentation site, all powered by a Convex backend.
+```sh
+bun install
+bun test
+bun check
+bun check:types
+bun run build
+```
 
-For a full list of technologies, please refer to the [Tech Stack](https://docs.albertplus.com/getting-started/tech-stack/) documentation.
+`build` bundles the Worker locally with Wrangler's dry-run mode; it does not deploy.
+The course tests use HTML fixtures rather than live NYU requests.
 
-## Deployed Sites
+## Reuse only the parser
 
-You can explore the deployed instances of AlbertPlus:
+Run this code with Bun, which supplies `fetch` and `HTMLRewriter`:
 
-- **Production App:** [albertplus.com](https://albertplus.com) - The main web application for course planning and schedule building.
-- **Development App:** [dev.albertplus.com](https://dev.albertplus.com) - The development instance of the web application.
-- **Documentation:** [docs.albertplus.com](https://docs.albertplus.com) - This documentation site.
-- **Scraper:** [scraper.albertplus.com](https://scraper.albertplus.com) - The Cloudflare Worker that scrapes course data from NYU public sites.
+```ts
+import { discoverCourses, scrapeCourse } from "./src/modules/courses";
 
-## Getting Started
+const urls = [...new Set(await discoverCourses("https://bulletins.nyu.edu/courses/"))];
+for (const url of urls) {
+  const courses = await scrapeCourse(url);
+  // Upsert courses into your database here.
+  console.log(JSON.stringify(courses));
+  await Bun.sleep(250);
+}
+```
 
-To get a local copy up and running, please follow the instructions in our [Quick Start](https://docs.albertplus.com/getting-started/quick-start/) guide.
+The parser does not need Cloudflare credentials or a database. Its local
+schemas use Zod. Prerequisites are heuristic, credits are rounded down, and unknown
+school codes default to Arts and Science.
 
-## Contributing
+## Run the existing Worker
 
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also contribute by opening an issue for bug report or feature request.
+This mode stores results in the existing D1 database using Drizzle. Supabase writes
+and a standalone scheduled import job have not been added.
 
-For more information, please see our [Contributing Guidelines](https://docs.albertplus.com/contributing/).
+## Local development
+
+1. Run `bun install`.
+2. Copy `.dev.vars.example` to `.dev.vars` and configure your
+   own scraper API key.
+3. Run `bun run db:migrate:local`.
+4. Run `bun dev` from the repository root.
+
+`GET /` is a health check. `POST /api/courses` queues catalog discovery and requires
+an `X-API-KEY` matching `SCRAPER_API_KEY`. It returns a job ID, not scraped data.
+`POST /api/programs` exists but its parser is unfinished.
+
+Successful scrape jobs store their validated parsed output as JSON in `jobs.result`.
+Course jobs contain an array of courses with prerequisites. Discovery jobs have no
+result payload; their output is the child jobs they enqueue. D1 also retains job
+status and errors. Queue retries update the same job record.
+
+Apply `bun run db:migrate:local` to existing local databases before running the
+updated Worker; the new migration adds the nullable `result` column. This is
+per-job output, not a deduplicated course catalog. Each new scrape retains another
+result, so plan job retention for repeated imports.
+
+## Deployment
+
+Before deploying, configure resources in your own Cloudflare account:
+
+- Replace the Worker name, original custom-domain route, D1 database ID/name,
+  and queue names in `wrangler.jsonc` as appropriate.
+- Update migration scripts if you change the D1 database name.
+- Configure `SCRAPER_API_KEY` as a Worker secret.
+- Apply remote D1 migrations with `bun run db:migrate:remote`.
+- Run `bun run cf-typegen` after changing Worker bindings.
+- Run `bun run deploy` when ready.
+
+Catalog scraping is manually triggered. No backend configuration service is needed.
+
+The optional GitHub deployment workflow requires `DOPPLER_TOKEN` and
+`CLOUDFLARE_API_TOKEN`; local parsing does not need Doppler. Deployment is manual
+via workflow dispatch. The Drizzle Studio/push commands optionally use `.db.env`
+with `DEV_DATABASE_URL` locally, or `CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_DATABASE_ID`, and `CLOUDFLARE_D1_TOKEN` remotely.
 
 ## License
 
-Distributed under the MIT License. See `LICENSE` for more information.
+MIT, copyright Tech@NYU. See [LICENSE](LICENSE).
