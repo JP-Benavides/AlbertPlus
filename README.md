@@ -109,6 +109,20 @@ via workflow dispatch. The Drizzle Studio/push commands optionally use `.db.env`
 with `DEV_DATABASE_URL` locally, or `CLOUDFLARE_ACCOUNT_ID`,
 `CLOUDFLARE_DATABASE_ID`, and `CLOUDFLARE_D1_TOKEN` remotely.
 
+## Import completed courses
+
+Set `DATABASE_URL` in `.db.env` (or supply it through the environment), then run:
+
+```sh
+bun run courses:flush
+```
+
+This imports completed course-job results into the existing `courses` table.
+It uses the newest result per course code, inserts new courses, and updates only
+changed courses. Batches of 100 commit in one transaction. The original job
+results are preserved. The command prints `jobsProcessed` and `coursesUpserted`,
+and exits with code 1 on failure. It does not require `bun dev` or an API call.
+
 ## License
 
 MIT, copyright Tech@NYU. See [LICENSE](LICENSE).

@@ -11,6 +11,7 @@
     "db:generate": "drizzle-kit generate --config=drizzle-dev.config.ts",
     "db:push:dev": "drizzle-kit push --config=drizzle-dev.config.ts",
     "db:push:prod": "drizzle-kit push --config=drizzle-prod.config.ts",
+    "courses:flush": "bun run src/scripts/flush-courses.ts",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "test": "bun test",
     "build": "wrangler deploy --dry-run --outdir dist",

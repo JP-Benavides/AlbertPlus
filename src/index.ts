@@ -357,6 +357,7 @@ export default {
             .update(jobs)
             .set({ status: "completed", completedAt: new Date(), result })
             .where(eq(jobs.id, jobId));
+          
 
           message.ack();
         } catch (error) {
