@@ -58,3 +58,19 @@ export const errorLogs = pgTable("error_logs", {
     mode: "date",
   }).notNull(),
 });
+
+
+ export const courses = pgTable("courses", {
+    code: text("code").primaryKey(),
+    level: text("level").notNull(),
+    title: text("title").notNull(),
+    school: text("school").notNull(),
+    credits: text("credits").notNull(),
+    program: text("program").notNull(),
+    programName: text("program_name").notNull(),
+    prerequisites: jsonb("prerequisites").default([]),
+    metadata: jsonb("metadata").$type<{
+      courseUrl: string;
+      description: string;
+    }>(),
+  });
